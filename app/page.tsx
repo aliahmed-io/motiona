@@ -209,6 +209,65 @@ function CursorFollower() {
   );
 }
 
+/* ─── Autoplay Demo Mode (Ctrl + S) ───────────────────────── */
+function AutoScroll() {
+  const [isAutoScrolling, setIsAutoScrolling] = useState(false);
+  const requestRef = useRef<number>(0);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Toggle on Ctrl+S or Cmd+S
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        setIsAutoScrolling((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!isAutoScrolling) {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      return;
+    }
+
+    const scrollStep = () => {
+      // Dynamically calculate speed needed to finish in exactly 10 seconds (at ~60fps)
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const speed = maxScroll / 600; 
+      
+      window.scrollBy(0, speed);
+      
+      // Stop if we hit the bottom
+      if (window.scrollY >= maxScroll - 2) {
+        setIsAutoScrolling(false);
+        return;
+      }
+      requestRef.current = requestAnimationFrame(scrollStep);
+    };
+
+    requestRef.current = requestAnimationFrame(scrollStep);
+
+    // Stop scrolling if user interacts manually
+    const handleUserInteraction = () => setIsAutoScrolling(false);
+    
+    // Attach passive listeners to cancel on manual interaction
+    window.addEventListener("wheel", handleUserInteraction, { passive: true });
+    window.addEventListener("touchstart", handleUserInteraction, { passive: true });
+    window.addEventListener("mousedown", handleUserInteraction, { passive: true });
+
+    return () => {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      window.removeEventListener("wheel", handleUserInteraction);
+      window.removeEventListener("touchstart", handleUserInteraction);
+      window.removeEventListener("mousedown", handleUserInteraction);
+    };
+  }, [isAutoScrolling]);
+
+  return null;
+}
+
 /* ─── Stat Card ───────────────────────────────────────────── */
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -223,6 +282,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 export default function Home() {
   return (
     <>
+      <AutoScroll />
       <CursorFollower />
       <SectionDots />
       <ScrollProgress />

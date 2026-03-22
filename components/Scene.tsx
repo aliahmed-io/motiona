@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useGLTF, Preload, Sky, Clouds, Cloud } from "@react-three/drei";
+import { useGLTF, Preload, Sky, Clouds, Cloud, useProgress } from "@react-three/drei";
 import { useRef, useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { scrollState } from "@/lib/store";
@@ -33,16 +33,21 @@ function OceanWater() {
   const mat = useMemo(
     () =>
       new THREE.ShaderMaterial({
-        uniforms: {
-          uTime:        { value: 0 },
-          uNormalMap:   { value: normalMap },
-          uSunDir:      { value: new THREE.Vector3(0.7, 0.3, 0.6).normalize() },
-          uSunColor:    { value: new THREE.Color("#ffd580") },         // warm gold sun
-          uWaterDeep:   { value: new THREE.Color("#0d4e8a") },         // vivid deep blue
-          uWaterShallow:{ value: new THREE.Color("#39a7c4") },         // Mediterranean teal
-          uFoamColor:   { value: new THREE.Color("#e8f4f8") },
-        },
+        fog: true,
+        uniforms: THREE.UniformsUtils.merge([
+          THREE.UniformsLib["fog"],
+          {
+            uTime:        { value: 0 },
+            uNormalMap:   { value: normalMap },
+            uSunDir:      { value: new THREE.Vector3(0.7, 0.3, 0.6).normalize() },
+            uSunColor:    { value: new THREE.Color("#ffd580") },         // warm gold sun
+            uWaterDeep:   { value: new THREE.Color("#0d4e8a") },         // vivid deep blue
+            uWaterShallow:{ value: new THREE.Color("#39a7c4") },         // Mediterranean teal
+            uFoamColor:   { value: new THREE.Color("#e8f4f8") },
+          }
+        ]),
         vertexShader: /* glsl */`
+          #include <fog_pars_vertex>
           uniform float uTime;
           varying vec2  vUv;
           varying vec3  vWorldNormal;
@@ -76,10 +81,14 @@ function OceanWater() {
 
             vec4 wp = modelMatrix * vec4(p, 1.0);
             vViewDir = normalize(cameraPosition - wp.xyz);
-            gl_Position = projectionMatrix * viewMatrix * wp;
+            vec4 mvPosition = viewMatrix * wp;
+            gl_Position = projectionMatrix * mvPosition;
+
+            #include <fog_vertex>
           }
         `,
         fragmentShader: /* glsl */`
+          #include <fog_pars_fragment>
           uniform float     uTime;
           uniform sampler2D uNormalMap;
           uniform vec3      uSunDir;
@@ -128,6 +137,8 @@ function OceanWater() {
             col += vec3(0.0, 0.06, 0.1) * (1.0 - fresnel) * 0.5;
 
             gl_FragColor = vec4(col, 0.97);
+
+            #include <fog_fragment>
           }
         `,
         transparent: true,
@@ -217,9 +228,9 @@ const SECTION_CONFIGS: SectionConfig[] = [
   // 2 — Power: dramatic front-quarter bow shot from elevated starboard
   //     Boat centred in upper-third, water stretches to horizon, stat cards below
   { pos: [ 2,   0,  -1],   rot: [0, -Math.PI / 4.5,  0],   cam: [ 8, 4.5, 15],   look: [ 1.5, 0,   -1] },
-  // 3 — Interior: gentle 3/4 elevated shot — deck detail + sunset horizon
-  //     Camera low enough that horizon is visible, but elevated enough to show deck
-  { pos: [-1,   0,   1],   rot: [0,  Math.PI / 1.6,  0],   cam: [ 5, 3.8, 15],   look: [-0.5, 0,    1] },
+  // 3 — Interior: steep overhead establishing shot into the cockpit
+  //     Camera is elevated high and angled down to see the leather chairs clearly
+  { pos: [-1.5, -0.2, 0],   rot: [0, Math.PI / 6, 0],   cam: [1.5, 6.5, 2.5],  look: [-0.5, 0.2, -0.5] },
   // 4 — Contact: wide pull-back establishing shot — full yacht + ocean + sky
   //     Centred, water-level, cinematic breathe room for CTA overlay
   { pos: [ 0,  -0.2,  1],  rot: [-0.02, Math.PI / 8, 0],   cam: [ 0, 2,   20],   look: [ 0,   0,    1] },
@@ -414,10 +425,17 @@ function Birds() {
    SCENE ROOT
 ═══════════════════════════════════════════════════════════ */
 
+import { Suspense } from "react";
+
 /* ─── Preloader Fallback ─────────────────────────────────── */
 function Preloader() {
+  const { progress } = useProgress();
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#0a0e14]">
+    <div
+      className={`absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#0a0e14] transition-opacity duration-1000 ${
+        progress === 100 ? "opacity-0 pointer-events-none" : "opacity-100"
+      }`}
+    >
       {/* Animated ring */}
       <svg
         width="64"
@@ -442,17 +460,16 @@ function Preloader() {
         />
       </svg>
       <p className="mt-6 text-[10px] tracking-[0.5em] uppercase text-primary/70 font-medium">
-        Loading Experience
+        Loading Experience {progress.toFixed(0)}%
       </p>
     </div>
   );
 }
 
-import { Suspense } from "react";
-
 export default function Scene() {
   return (
-    <Suspense fallback={<Preloader />}>
+    <>
+      <Preloader />
       <Canvas
         camera={{ position: [3, 2.2, 16], fov: 40 }}
         dpr={[1, 1.5]}
@@ -464,39 +481,41 @@ export default function Scene() {
           toneMappingExposure: 1.05,
         }}
       >
-        {/* Atmospheric fog — blends distant ocean into sky */}
-        <fog attach="fog" args={["#8aafbf", 30, 180]} />
+        <Suspense fallback={null}>
+          {/* Atmospheric fog — blends distant ocean into sky */}
+          <fog attach="fog" args={["#8aafbf", 30, 180]} />
 
-        {/* Warm golden-hour lighting */}
-        <ambientLight intensity={0.5} color="#d4b97a" />
-        <directionalLight position={[80, 20, 50]} intensity={2.8} color="#ffe0a0" castShadow />
-        <directionalLight position={[-20,  8, -20]} intensity={0.6} color="#7abcdf" />
-        <directionalLight position={[  0, -4,   0]} intensity={0.3} color="#5aadcc" />
+          {/* Warm golden-hour lighting */}
+          <ambientLight intensity={0.5} color="#d4b97a" />
+          <directionalLight position={[80, 20, 50]} intensity={2.8} color="#ffe0a0" castShadow />
+          <directionalLight position={[-20,  8, -20]} intensity={0.6} color="#7abcdf" />
+          <directionalLight position={[  0, -4,   0]} intensity={0.3} color="#5aadcc" />
 
-        {/* Vivid afternoon / golden-hour sky */}
-        <Sky
-          distance={450000}
-          sunPosition={[60, 12, 50]}
-          turbidity={7}
-          rayleigh={2.0}
-          mieCoefficient={0.006}
-          mieDirectionalG={0.88}
-        />
+          {/* Vivid afternoon / golden-hour sky */}
+          <Sky
+            distance={450000}
+            sunPosition={[60, 12, 50]}
+            turbidity={7}
+            rayleigh={2.0}
+            mieCoefficient={0.006}
+            mieDirectionalG={0.88}
+          />
 
-        {/* Soft volumetric clouds */}
-        <Clouds material={THREE.MeshBasicMaterial}>
-          <Cloud segments={40} bounds={[35, 5, 5]}  volume={14} color="#ffe4b0" position={[  0, 18, -40]} opacity={0.38} />
-          <Cloud segments={28} bounds={[22, 4, 22]} volume={10} color="#ffd89a" position={[-28, 10, -18]} opacity={0.28} />
-          <Cloud segments={22} bounds={[22, 5,  6]} volume={11} color="#fff0d8" position={[ 28, 14, -25]} opacity={0.30} />
-        </Clouds>
+          {/* Soft volumetric clouds */}
+          <Clouds material={THREE.MeshBasicMaterial}>
+            <Cloud segments={40} bounds={[35, 5, 5]}  volume={14} color="#ffe4b0" position={[  0, 18, -40]} opacity={0.38} />
+            <Cloud segments={28} bounds={[22, 4, 22]} volume={10} color="#ffd89a" position={[-28, 10, -18]} opacity={0.28} />
+            <Cloud segments={22} bounds={[22, 5,  6]} volume={11} color="#fff0d8" position={[ 28, 14, -25]} opacity={0.30} />
+          </Clouds>
 
-        <Rig />
-        <OceanWater />
-        <Birds />
+          <Rig />
+          <OceanWater />
+          <Birds />
 
-        <Preload all />
+          <Preload all />
+        </Suspense>
       </Canvas>
-    </Suspense>
+    </>
   );
 }
 
